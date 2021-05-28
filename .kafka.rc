@@ -1,0 +1,7 @@
+#### Kafka example configuration file
+bootstrap.servers=
+#security.protocol=SSL
+security.protocol=SASL_SSL
+sasl.mechanisms=PLAIN
+sasl.username=
+sasl.password=
