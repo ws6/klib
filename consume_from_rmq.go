@@ -43,6 +43,7 @@ func (self *Klib) ConsumeLoopPersistFromRMQ(ctx context.Context, topic string, f
 	}
 	go func() {
 		r := self.GetReader(topic)
+		defer r.Close()
 		//forward to RMQ
 		//no back prressure control for now. making sure kafka doesn't congest RMQ
 		if err := self.Consume(ctx, r, func(m *Message) error {

@@ -226,7 +226,7 @@ func (self *Klib) ConsumeLoop(ctx context.Context, topic string, fn MessageProce
 //ConsumerLoop runs as loop
 func (self *Klib) ConsumeLoopPlain(ctx context.Context, topic string, fn MessageProcessor) {
 	r := self.GetReader(topic)
-
+	defer r.Close()
 	self.Consume(ctx, r, fn)
 }
 
