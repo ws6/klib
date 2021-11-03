@@ -169,6 +169,8 @@ func (self *Klib) Consume(ctx context.Context, r *kafka.Reader, fn MessageProces
 			log.Fatal(err.Error())
 			break
 		}
+		//TODO push to RMQ for long time lasting consuming
+		//fetch it off RMQ once after pushed
 
 		aloeMsg := FromKafkaMessage(&m)
 		if err := fn(aloeMsg); err != nil {
@@ -198,8 +200,26 @@ func (self *Klib) Consume(ctx context.Context, r *kafka.Reader, fn MessageProces
 	return nil
 }
 
+func (self *Klib) UseAmqp() bool {
+	return self.config[`use_amqp`] != `true`
+}
+
 //ConsumerLoop runs as loop
 func (self *Klib) ConsumeLoop(ctx context.Context, topic string, fn MessageProcessor) {
+	if !self.UseAmqp() {
+		self.ConsumeLoopPlain(ctx, topic, fn)
+		return
+	}
+	if err := self.ConsumeLoopPersistFromRMQ(ctx, topic, fn); err != nil {
+		fmt.Println(`ConsumeLoopPersistFromRMQ exit`, err.Error())
+	}
+}
+
+//ConsumerLoop runs as loop
+func (self *Klib) ConsumeLoopPlain(ctx context.Context, topic string, fn MessageProcessor) {
 	r := self.GetReader(topic)
+
 	self.Consume(ctx, r, fn)
 }
+
+// ConsumeLoopPersistFromRMQ

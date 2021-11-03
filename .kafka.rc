@@ -5,3 +5,12 @@ security.protocol=SASL_SSL
 sasl.mechanisms=PLAIN
 sasl.username=
 sasl.password=
+#
+#when use amqp for long running functions
+#
+#the latch to enable or disable amqp
+use_amqp=true
+#the connection string for amqp
+amqp_connection_string=amqp://$username:$password@host:$port/
+#queue name used in rmq. create if not exist
+amqp_queue_name=the_queue_name_in_rmq
