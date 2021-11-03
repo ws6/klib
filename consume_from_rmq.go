@@ -9,6 +9,8 @@ import (
 	// fmt.Sprintf(`amqp://%s:%s@%s:%d/`, userName, password, url, port)
 )
 
+var ERR_AMQP_CONNECTION_CLOSED = fmt.Errorf(`amqp connection closed`)
+
 func (self *Klib) ConsumeLoopPersistFromRMQ(ctx context.Context, topic string, fn MessageProcessor) error {
 
 	amqpConnStr := self.config[`amqp_connection_string`]
@@ -100,7 +102,12 @@ func (self *Klib) ConsumeLoopPersistFromRMQ(ctx context.Context, topic string, f
 			self.TrySendDLQMessage(topic, kmsg, err)
 		}
 
-		msg.Ack(false)
+		if err := msg.Ack(false); err != nil {
+			if conn.IsClosed() {
+				return ERR_AMQP_CONNECTION_CLOSED
+			}
+			self.TrySendDLQMessage(topic, kmsg, err)
+		}
 
 		select {
 		case <-ctx.Done():

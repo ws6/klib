@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"sync"
 
@@ -210,9 +211,16 @@ func (self *Klib) ConsumeLoop(ctx context.Context, topic string, fn MessageProce
 		self.ConsumeLoopPlain(ctx, topic, fn)
 		return
 	}
-	if err := self.ConsumeLoopPersistFromRMQ(ctx, topic, fn); err != nil {
-		fmt.Println(`ConsumeLoopPersistFromRMQ exit`, err.Error())
+	for {
+		if err := self.ConsumeLoopPersistFromRMQ(ctx, topic, fn); err != nil {
+			fmt.Println(`ConsumeLoopPersistFromRMQ exit`, err.Error())
+			if err != ERR_AMQP_CONNECTION_CLOSED {
+				return
+			}
+			time.Sleep(time.Second * 120)
+		}
 	}
+
 }
 
 //ConsumerLoop runs as loop
