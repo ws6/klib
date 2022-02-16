@@ -202,7 +202,7 @@ func (self *Klib) Consume(ctx context.Context, r *kafka.Reader, fn MessageProces
 }
 
 func (self *Klib) UseAmqp() bool {
-	return self.config[`use_amqp`] != `true`
+	return self.config[`use_amqp`] == `true`
 }
 
 //ConsumerLoop runs as loop
