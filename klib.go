@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	DEFAULT_BATCH_SIZE = 1
+	DEFAULT_BATCH_SIZE           = 1
+	DEFAULT_PRODUCER_BUFFER_SIZE = 1000
 )
 
 type Klib struct {
@@ -112,17 +113,34 @@ func (self *Klib) Produce(ctx context.Context, topic string, msgs []*Message) er
 	return nil
 }
 
+func (self *Klib) GetBuffSize() int {
+	s := self.config[`producer_buffer_size`]
+	if s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
+		}
+	}
+	return DEFAULT_PRODUCER_BUFFER_SIZE
+}
+
 func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan *Message) error {
 	w := self.NewWriter(topic)
 	defer w.Close()
-
+	//buffer it
+	buffSize := self.GetBuffSize()
+	buffer := make([]kafka.Message, buffSize)
 	for msg := range msgsChan {
 		kmsg := ToKafkaMessage(msg)
+		buffer = append(buffer, kmsg)
+
 		//TODO when error create dead letter message
 		//and retry
-		if err := w.WriteMessages(ctx, kmsg); err != nil {
-			fmt.Println(`WriteMessages`, err.Error())
-			continue
+		if len(buffer) >= buffSize {
+			if err := w.WriteMessages(ctx, buffer...); err != nil {
+				fmt.Println(`WriteMessages`, err.Error())
+				continue
+			}
+			buffer = buffer[:0]
 		}
 
 		select {
@@ -133,6 +151,12 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 
 		}
 
+	}
+	if len(buffer) > 0 {
+		if err := w.WriteMessages(ctx, buffer...); err != nil {
+			return err
+		}
+		buffer = nil
 	}
 
 	return nil
