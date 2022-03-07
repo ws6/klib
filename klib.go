@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	DEFAULT_BATCH_SIZE           = 1
+	DEFAULT_BATCH_SIZE           = 1000
 	DEFAULT_PRODUCER_BUFFER_SIZE = 1000
 )
 
@@ -80,7 +80,7 @@ func (self *Klib) getBrokers() []string {
 
 func (self *Klib) NewWriter(topic string) *kafka.Writer {
 	brokers := self.getBrokers()
-	batchSize, _ := strconv.Atoi(self.config[`batch_size`])
+	batchSize, _ := strconv.Atoi(self.config[`producer_batch_size`])
 	if batchSize <= 0 {
 		batchSize = DEFAULT_BATCH_SIZE
 	}
@@ -125,49 +125,36 @@ func (self *Klib) GetBuffSize() int {
 
 func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan *Message) error {
 	w := self.NewWriter(topic)
+	w.Async = true
 	defer w.Close()
-	//buffer it
-	buffSize := self.GetBuffSize()
-	buffer := make([]kafka.Message, buffSize)
-
-	writeMessages := func() error {
-		if len(buffer) == 0 {
-			return nil
-		}
-		if err := w.WriteMessages(ctx, buffer...); err != nil {
-
-			return err
-		}
-		//afterWriteMessages
-		buffer = buffer[:0]
-		return nil
-	}
 
 	for {
 		select {
 		case msg, ok := <-msgsChan:
+
 			if !ok {
 				//https://stackoverflow.com/questions/13666253/breaking-out-of-a-select-statement-when-all-channels-are-closed
 				msgsChan = nil
 				break
 			}
-
 			kmsg := ToKafkaMessage(msg)
-			buffer = append(buffer, kmsg)
-			if len(buffer) >= buffSize {
-				writeMessages()
+
+			if err := w.WriteMessages(ctx, kmsg); err != nil {
+
+				return err
 			}
+
 		case <-ctx.Done():
-			writeMessages()
+
 			return ctx.Err()
-		case <-time.After(time.Second * 12): //delay write
-			writeMessages()
+
 		}
 		if msgsChan == nil {
 			break
 		}
 	}
-	return writeMessages()
+
+	return nil
 }
 
 func (self *Klib) GetConsumerGroupId() string {
