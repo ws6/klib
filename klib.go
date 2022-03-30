@@ -25,11 +25,12 @@ const (
 )
 
 type Klib struct {
-	config           map[string]string
-	dialer           *kafka.Dialer
-	topicCreated     map[string]bool // when a topic is created by CreateTopic, cache it.
-	topicCreatedLock sync.Mutex
-	dlqChan          chan *Message
+	config                map[string]string
+	dialer                *kafka.Dialer
+	topicCreated          map[string]bool // when a topic is created by CreateTopic, cache it.
+	topicCreatedLock      sync.Mutex
+	dlqChan               chan *Message
+	ReturnOnProducerError bool
 }
 
 func (self *Klib) GetConfig() map[string]string {
@@ -140,8 +141,11 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 			kmsg := ToKafkaMessage(msg)
 
 			if err := w.WriteMessages(ctx, kmsg); err != nil {
+				fmt.Println(`WriteMessages`, err.Error())
+				if self.ReturnOnProducerError {
+					return err
+				}
 
-				return err
 			}
 
 		case <-ctx.Done():
