@@ -14,9 +14,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 
-	"github.com/segmentio/kafka-go/sasl/plain"
-
 	kafka "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/plain"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -85,14 +85,19 @@ func (self *Klib) NewWriter(topic string) *kafka.Writer {
 	if batchSize <= 0 {
 		batchSize = DEFAULT_BATCH_SIZE
 	}
+
 	return kafka.NewWriter(kafka.WriterConfig{
 		Dialer:  self.dialer,
 		Brokers: brokers,
 		Topic:   topic,
 		//compatible with   librdkafka behavior
-		Balancer:     &kafka.CRC32Balancer{},
-		BatchSize:    batchSize,
-		RequiredAcks: -1, //by default requires all ack
+		Balancer:  &kafka.CRC32Balancer{},
+		BatchSize: batchSize,
+		// BatchSize: 1,
+		// RequiredAcks: -1, //by default requires all ack
+		WriteTimeout: time.Second * 1,
+		// ErrorLogger:  logrus.New(),
+
 	})
 }
 
@@ -130,8 +135,40 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 	if self.config[`produce_async`] == `true` {
 		w.Async = true
 	}
-
+	w.Completion = func(msgs []kafka.Message, comErr error) {
+		if comErr != nil {
+			logrus.Warnf(`write message(len=%d) error:%s`, len(msgs), comErr.Error())
+		}
+	}
 	defer w.Close()
+
+	buff := []*Message{}
+	publishBufferAndClean := func() error {
+		if len(buff) == 0 {
+			return nil
+		}
+		defer func() {
+
+			buff = []*Message{}
+		}()
+		topub := []kafka.Message{}
+		for _, m := range buff {
+			topub = append(topub, ToKafkaMessage(m))
+		}
+
+		werr := w.WriteMessages(ctx, topub...)
+		if werr == nil {
+			return nil
+		}
+		for i := 0; i < w.MaxAttempts; i++ {
+			logrus.Info(`retry WriteMessages`, i, " msg count=", len(buff))
+			if werr = w.WriteMessages(ctx, topub...); werr == nil {
+				logrus.Info(`retry success!!!`)
+				return nil
+			}
+		}
+		return werr
+	}
 
 	for {
 		select {
@@ -142,15 +179,89 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 				msgsChan = nil
 				break
 			}
-			kmsg := ToKafkaMessage(msg)
 
-			if err := w.WriteMessages(ctx, kmsg); err != nil {
+			buff = append(buff, msg)
+
+			if len(buff) >= w.BatchSize {
+				//pub and clean
+				if err := publishBufferAndClean(); err != nil {
+					fmt.Println(`publishBufferAndClean:%s`, err.Error())
+					//TODO retry?
+				}
+			}
+
+		case <-time.After(5 * time.Second):
+
+			if err := publishBufferAndClean(); err != nil {
+				fmt.Println(`publishBufferAndClean:%s`, err.Error())
+				//TODO retry?
+			}
+
+		case <-ctx.Done():
+
+			return ctx.Err()
+
+		}
+		if msgsChan == nil {
+			break
+		}
+	}
+
+	return nil
+}
+
+func (self *Klib) ProduceChan_bak(ctx context.Context, topic string, msgsChan <-chan *Message) error {
+	w := self.NewWriter(topic)
+	if self.config[`produce_async`] == `true` {
+		w.Async = true
+	}
+	w.Completion = func(msgs []kafka.Message, comErr error) {
+		if comErr != nil {
+			logrus.Warn(`write message error:%s`, comErr.Error())
+		}
+	}
+	defer w.Close()
+	_cap := cap(msgsChan)
+	for {
+		select {
+		case msg, ok := <-msgsChan:
+
+			if !ok {
+				//https://stackoverflow.com/questions/13666253/breaking-out-of-a-select-statement-when-all-channels-are-closed
+				msgsChan = nil
+				break
+			}
+			topub := []*Message{
+				msg,
+			}
+
+			if len(msgsChan) == _cap { //chan is full
+				i := 0
+				for msg0 := range msgsChan {
+					i++
+					topub = append(topub, msg0)
+					if i >= _cap || (len(topub) >= w.BatchSize) {
+						break
+					}
+				}
+			}
+			topubKmsg := []kafka.Message{}
+			//pub one message
+			for _, m := range topub {
+				kmsg := ToKafkaMessage(m)
+				topubKmsg = append(topubKmsg, kmsg)
+			}
+
+			// w.BatchSize
+
+			if err := w.WriteMessages(ctx, topubKmsg...); err != nil {
 				fmt.Println(`ProduceChan WriteMessages`, err.Error())
 				if self.ReturnOnProducerError {
 					return err
 				}
 
 			}
+			logrus.Info(`published   message=`, len(topubKmsg))
 
 		case <-ctx.Done():
 
