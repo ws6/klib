@@ -90,8 +90,9 @@ func (self *Klib) NewWriter(topic string) *kafka.Writer {
 		Brokers: brokers,
 		Topic:   topic,
 		//compatible with   librdkafka behavior
-		Balancer:  &kafka.CRC32Balancer{},
-		BatchSize: batchSize,
+		Balancer:     &kafka.CRC32Balancer{},
+		BatchSize:    batchSize,
+		RequiredAcks: -1, //by default requires all ack
 	})
 }
 
@@ -126,7 +127,10 @@ func (self *Klib) GetBuffSize() int {
 
 func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan *Message) error {
 	w := self.NewWriter(topic)
-	w.Async = true
+	if self.config[`produce_async`] == `true` {
+		w.Async = true
+	}
+
 	defer w.Close()
 
 	for {
@@ -141,7 +145,7 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 			kmsg := ToKafkaMessage(msg)
 
 			if err := w.WriteMessages(ctx, kmsg); err != nil {
-				fmt.Println(`WriteMessages`, err.Error())
+				fmt.Println(`ProduceChan WriteMessages`, err.Error())
 				if self.ReturnOnProducerError {
 					return err
 				}
