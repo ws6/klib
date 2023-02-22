@@ -93,6 +93,10 @@ func (self *Klib) ConsumeLoopPersistFromRMQ(ctx context.Context, topic string, f
 		return fmt.Errorf(`Consume:%s`, err.Error())
 	}
 
+	if err := ch.Qos(1, 0, false); err != nil {
+		return fmt.Errorf(`RMQ Qos:%s`, err.Error())
+	}
+
 	for msg := range msgQueue {
 
 		kmsg := new(Message)
