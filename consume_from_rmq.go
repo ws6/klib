@@ -79,6 +79,10 @@ func (self *Klib) ConsumeLoopPersistFromRMQ(ctx context.Context, topic string, f
 
 	defer ch.Close()
 
+	if err := ch.Qos(1, 0, false); err != nil {
+		return fmt.Errorf(`RMQ Qos:%s`, err.Error())
+	}
+
 	msgQueue, err := ch.Consume(
 
 		queueName, // queue
@@ -91,10 +95,6 @@ func (self *Klib) ConsumeLoopPersistFromRMQ(ctx context.Context, topic string, f
 	)
 	if err != nil {
 		return fmt.Errorf(`Consume:%s`, err.Error())
-	}
-
-	if err := ch.Qos(1, 0, false); err != nil {
-		return fmt.Errorf(`RMQ Qos:%s`, err.Error())
 	}
 
 	for msg := range msgQueue {
