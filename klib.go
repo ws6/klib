@@ -95,7 +95,7 @@ func (self *Klib) NewWriter(topic string) *kafka.Writer {
 		BatchSize: batchSize,
 		// BatchSize: 1,
 		// RequiredAcks: -1, //by default requires all ack
-		WriteTimeout: time.Second * 1,
+		// WriteTimeout: time.Second * 1,
 		// ErrorLogger:  logrus.New(),
 
 	})
@@ -138,6 +138,7 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 	w.Completion = func(msgs []kafka.Message, comErr error) {
 		if comErr != nil {
 			logrus.Warnf(`write message(len=%d) error:%s`, len(msgs), comErr.Error())
+			//TODO pub to dlq
 		}
 	}
 	defer w.Close()
@@ -346,15 +347,20 @@ func (self *Klib) UseAmqp() bool {
 //ConsumerLoop runs as loop
 func (self *Klib) ConsumeLoop(ctx context.Context, topic string, fn MessageProcessor) {
 	if !self.UseAmqp() {
+		logrus.Info(`Not using AMQP`)
 		self.ConsumeLoopPlain(ctx, topic, fn)
 		return
 	}
+	logrus.Info(`Using AMQP`)
 	for {
 		if err := self.ConsumeLoopPersistFromRMQ(ctx, topic, fn); err != nil {
 			fmt.Println(`ConsumeLoopPersistFromRMQ exit`, err.Error())
 			if err != ERR_AMQP_CONNECTION_CLOSED {
+				logrus.Warn(`ConsumeLoopPersistFromRMQ:`, err.Error())
 				return
 			}
+			logrus.Info(`trying to reconnect AMQP in 120 seconds.`)
+
 			time.Sleep(time.Second * 120)
 		}
 	}

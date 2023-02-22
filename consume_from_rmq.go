@@ -18,6 +18,7 @@ func (self *Klib) ConsumeLoopPersistFromRMQ(ctx context.Context, topic string, f
 		return fmt.Errorf(`amqp_connection_string is empty`)
 	}
 	conn, err := amqp.Dial(amqpConnStr)
+
 	if err != nil {
 		return fmt.Errorf(`amqp.Dial:%s`, err.Error())
 	}
