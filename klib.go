@@ -22,6 +22,7 @@ import (
 const (
 	DEFAULT_BATCH_SIZE           = 1000
 	DEFAULT_PRODUCER_BUFFER_SIZE = 1000
+	DEFAULT_PRODUCER_RETRY       = 3
 )
 
 type Klib struct {
@@ -31,6 +32,11 @@ type Klib struct {
 	topicCreatedLock      sync.Mutex
 	dlqChan               chan *Message
 	ReturnOnProducerError bool
+	ProducerErrorHandler
+}
+
+type ProducerErrorHandler interface {
+	OnKlibProducerError([]*Message, error) error
 }
 
 func (self *Klib) GetConfig() map[string]string {
@@ -85,7 +91,7 @@ func (self *Klib) NewWriter(topic string) *kafka.Writer {
 	if batchSize <= 0 {
 		batchSize = DEFAULT_BATCH_SIZE
 	}
-
+	logrus.Info(`BatchSize=`, batchSize)
 	return kafka.NewWriter(kafka.WriterConfig{
 		Dialer:  self.dialer,
 		Brokers: brokers,
@@ -129,12 +135,22 @@ func (self *Klib) GetBuffSize() int {
 	}
 	return DEFAULT_PRODUCER_BUFFER_SIZE
 }
+func (self *Klib) GetProducerRetryCount() int {
+	s := self.config[`producer_retr`]
+	if s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
+		}
+	}
+	return DEFAULT_PRODUCER_RETRY
+}
 
 func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan *Message) error {
 	w := self.NewWriter(topic)
 	if self.config[`produce_async`] == `true` {
 		w.Async = true
 	}
+	w.Compression = kafka.Gzip
 	w.Completion = func(msgs []kafka.Message, comErr error) {
 		if comErr != nil {
 			logrus.Warnf(`write message(len=%d) error:%s`, len(msgs), comErr.Error())
@@ -144,14 +160,8 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 	defer w.Close()
 
 	buff := []*Message{}
-	publishBufferAndClean := func() error {
-		if len(buff) == 0 {
-			return nil
-		}
-		defer func() {
+	_publishBufferAndClean := func() error {
 
-			buff = []*Message{}
-		}()
 		topub := []kafka.Message{}
 		for _, m := range buff {
 			topub = append(topub, ToKafkaMessage(m))
@@ -161,7 +171,7 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 		if werr == nil {
 			return nil
 		}
-		for i := 0; i < w.MaxAttempts; i++ {
+		for i := 0; i < self.GetProducerRetryCount(); i++ {
 			logrus.Info(`retry WriteMessages`, i, " msg count=", len(buff))
 			if werr = w.WriteMessages(ctx, topub...); werr == nil {
 				logrus.Info(`retry success!!!`)
@@ -170,7 +180,28 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 		}
 		return werr
 	}
+	publishBufferAndClean := func() error {
+		if len(buff) == 0 {
+			return nil
+		}
+		defer func() {
 
+			buff = []*Message{}
+		}()
+		if err := _publishBufferAndClean(); err != nil {
+			if self.ProducerErrorHandler == nil {
+				return err
+			}
+			if self.ProducerErrorHandler != nil {
+				tolog := []*Message{}
+				for _, m := range buff {
+					tolog = append(tolog, m)
+				}
+				return self.ProducerErrorHandler.OnKlibProducerError(tolog, err)
+			}
+		}
+		return nil
+	}
 	for {
 		select {
 		case msg, ok := <-msgsChan:
@@ -186,7 +217,7 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 			if len(buff) >= w.BatchSize {
 				//pub and clean
 				if err := publishBufferAndClean(); err != nil {
-					fmt.Println(`publishBufferAndClean:%s`, err.Error())
+					fmt.Println(`publishBufferAndClean: `, err.Error())
 					//TODO retry?
 				}
 			}
@@ -194,7 +225,7 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 		case <-time.After(5 * time.Second):
 
 			if err := publishBufferAndClean(); err != nil {
-				fmt.Println(`publishBufferAndClean:%s`, err.Error())
+				fmt.Println(`publishBufferAndClean(on timeout): `, err.Error())
 				//TODO retry?
 			}
 
