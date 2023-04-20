@@ -3,9 +3,11 @@ package klib
 import (
 	"context"
 	"fmt"
-	"os"
+
 	"testing"
 	"time"
+
+	kafka "github.com/segmentio/kafka-go"
 )
 
 func getTestMessages() []*Message {
@@ -41,7 +43,7 @@ func TestKLib(t *testing.T) {
 		t.Fatalf("NewKlib:%s\n", err.Error())
 	}
 	ctx, cancelFn := context.WithCancel(context.Background())
-	topic := `test_klib` //!!!create this yourself.
+	topic := `test_klib_auto_create_2` //!!!create this yourself.
 	msgs := getTestMessages()
 	go func() {
 		k.Produce(context.Background(), topic, msgs)
@@ -136,3 +138,47 @@ func TestCreateTopic(t *testing.T) {
 
 }
 
+func TestAlterConfig(t *testing.T) {
+	cfg, err := GetConfig()
+
+	if err != nil {
+		t.Fatalf("config:%s\n", err.Error())
+	}
+
+	if len(cfg) == 0 {
+		t.Fatal(`no configurations`)
+	}
+
+	k, err := NewKlib(cfg)
+
+	if err != nil {
+		t.Fatalf("NewKlib:%s\n", err.Error())
+	}
+
+	client := k.GetClient()
+
+	MaxMessageBytes := "max.message.bytes"
+	MaxMessageBytesValue := fmt.Sprintf(`%d`, 1024*1024*8)
+	topic := `test_klib_auto_create_2`
+
+	// MyAddr := conn.RemoteAddr()
+
+	req := &kafka.AlterConfigsRequest{
+		// Addr: &MyAddr,
+		Resources: []kafka.AlterConfigRequestResource{{
+			ResourceType: kafka.ResourceTypeTopic,
+			ResourceName: topic,
+			Configs: []kafka.AlterConfigRequestConfig{{
+				Name:  MaxMessageBytes,
+				Value: MaxMessageBytesValue,
+			},
+			},
+		}},
+	}
+	t.Logf("%+v\n", req)
+	_, err = client.AlterConfigs(context.Background(), req)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+}

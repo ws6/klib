@@ -59,6 +59,7 @@ func NewKlib(cfg map[string]string) (*Klib, error) {
 	if rootCAs == nil {
 		rootCAs = x509.NewCertPool()
 	}
+
 	ret.dialer = &kafka.Dialer{
 		DualStack: true,
 		SASLMechanism: plain.Mechanism{
@@ -74,6 +75,29 @@ func NewKlib(cfg map[string]string) (*Klib, error) {
 	return ret, nil
 }
 
+func (self *Klib) GetClient() *kafka.Client {
+	// ret := kafka.Client{
+	// 	Addr: kafka.TCP(self.getBrokers()...),
+	// }
+	// func(context.Context, string, string) (net.Conn, error)
+
+	transport := &kafka.Transport{
+		// Dial:     conns.Dial,
+		// Dial: self.dialer.DialFunc,
+		// Resolver: kafka.NewBrokerResolver(nil),
+	}
+	_ = transport
+	client := &kafka.Client{
+		Addr:      kafka.TCP(self.getBrokers()...),
+		Timeout:   5 * time.Second,
+		Transport: transport,
+	}
+
+	return client
+
+	// return &ret, nil
+}
+
 func (self *Klib) Close() error {
 	if self.dlqChan != nil {
 		close(self.dlqChan)
@@ -85,7 +109,27 @@ func (self *Klib) getBrokers() []string {
 	return strings.Split(self.config[`bootstrap.servers`], ";")
 }
 
+func (self *Klib) AutoCreateTopic(topic string) bool {
+	if self.config[`auto_create_topic`] == `true` {
+		return true
+	}
+
+	if self.config[fmt.Sprintf(`auto_create_topic_%s`, topic)] == `true` {
+		return true
+	}
+
+	return false
+}
+
 func (self *Klib) NewWriter(topic string) *kafka.Writer {
+	//create if not exist topic when set
+
+	if self.AutoCreateTopic(topic) {
+		if err := self.CreateIfNotRegistered(topic); err != nil {
+			panic(fmt.Sprintf(`Error Create A topic[%s]:%s`, topic, err.Error()))
+		}
+	}
+
 	brokers := self.getBrokers()
 	batchSize, _ := strconv.Atoi(self.config[`producer_batch_size`])
 	if batchSize <= 0 {
@@ -242,72 +286,6 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 	return nil
 }
 
-func (self *Klib) ProduceChan_bak(ctx context.Context, topic string, msgsChan <-chan *Message) error {
-	w := self.NewWriter(topic)
-	if self.config[`produce_async`] == `true` {
-		w.Async = true
-	}
-	w.Completion = func(msgs []kafka.Message, comErr error) {
-		if comErr != nil {
-			logrus.Warn(`write message error:%s`, comErr.Error())
-		}
-	}
-	defer w.Close()
-	_cap := cap(msgsChan)
-	for {
-		select {
-		case msg, ok := <-msgsChan:
-
-			if !ok {
-				//https://stackoverflow.com/questions/13666253/breaking-out-of-a-select-statement-when-all-channels-are-closed
-				msgsChan = nil
-				break
-			}
-			topub := []*Message{
-				msg,
-			}
-
-			if len(msgsChan) == _cap { //chan is full
-				i := 0
-				for msg0 := range msgsChan {
-					i++
-					topub = append(topub, msg0)
-					if i >= _cap || (len(topub) >= w.BatchSize) {
-						break
-					}
-				}
-			}
-			topubKmsg := []kafka.Message{}
-			//pub one message
-			for _, m := range topub {
-				kmsg := ToKafkaMessage(m)
-				topubKmsg = append(topubKmsg, kmsg)
-			}
-
-			// w.BatchSize
-
-			if err := w.WriteMessages(ctx, topubKmsg...); err != nil {
-				fmt.Println(`ProduceChan WriteMessages`, err.Error())
-				if self.ReturnOnProducerError {
-					return err
-				}
-
-			}
-			logrus.Info(`published   message=`, len(topubKmsg))
-
-		case <-ctx.Done():
-
-			return ctx.Err()
-
-		}
-		if msgsChan == nil {
-			break
-		}
-	}
-
-	return nil
-}
-
 func (self *Klib) GetConsumerGroupId() string {
 	return self.config[`consumer_group_id`]
 }
@@ -317,6 +295,12 @@ func (self *Klib) SetConsumerGroupId(id string) {
 }
 
 func (self *Klib) GetReader(topic string) *kafka.Reader {
+
+	if self.AutoCreateTopic(topic) {
+		if err := self.CreateIfNotRegistered(topic); err != nil {
+			panic(fmt.Sprintf(`Error Create A topic[%s]:%s`, topic, err.Error()))
+		}
+	}
 	return kafka.NewReader(kafka.ReaderConfig{
 		Brokers: self.getBrokers(),
 		GroupID: self.GetConsumerGroupId(),
@@ -377,6 +361,13 @@ func (self *Klib) UseAmqp() bool {
 
 //ConsumerLoop runs as loop
 func (self *Klib) ConsumeLoop(ctx context.Context, topic string, fn MessageProcessor) {
+
+	if self.AutoCreateTopic(topic) {
+		if err := self.CreateIfNotRegistered(topic); err != nil {
+			panic(fmt.Sprintf(`Error Create A topic[%s]:%s`, topic, err.Error()))
+		}
+	}
+
 	if !self.UseAmqp() {
 		logrus.Info(`Not using AMQP`)
 		self.ConsumeLoopPlain(ctx, topic, fn)

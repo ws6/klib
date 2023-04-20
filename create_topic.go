@@ -17,6 +17,13 @@ func (self *Klib) CreateTopic(topic string) error {
 	//!!! default confluent.cloud replica is 3; if it doesnt match with server config, it will fail create a topic
 	numPartitions, replicationFactor := 1, 3
 
+	//non topic specific default numOfPatitions
+	if n, err := strconv.Atoi(self.config[fmt.Sprintf(`num_partitions`)]); err == nil {
+		if n >= 1 {
+			numPartitions = n
+		}
+	}
+
 	if n, err := strconv.Atoi(self.config[fmt.Sprintf(`num_partitions_%s`, topic)]); err == nil {
 		if n >= 1 {
 			numPartitions = n
@@ -62,6 +69,7 @@ func (self *Klib) CreateTopic(topic string) error {
 		ReplicationFactor: replicationFactor,
 		Topic:             topic,
 	}
+	fmt.Println(`creating topic`, cfg)
 
 	return controllerConn.CreateTopics(cfg)
 }
