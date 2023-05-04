@@ -4,12 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/streadway/amqp"
 	// fmt.Sprintf(`amqp://%s:%s@%s:%d/`, userName, password, url, port)
 )
 
 var ERR_AMQP_CONNECTION_CLOSED = fmt.Errorf(`amqp connection closed`)
+
+func (self *Klib) GetRMQName() string {
+	if q := os.Getenv(`KLIB_RMQ_NAME`); q != "" {
+		self.config[`amqp_queue_name`] = q
+	}
+	return self.config[`amqp_queue_name`]
+}
 
 func (self *Klib) ConsumeLoopPersistFromRMQ(ctx context.Context, topic string, fn MessageProcessor) error {
 
@@ -28,7 +36,7 @@ func (self *Klib) ConsumeLoopPersistFromRMQ(ctx context.Context, topic string, f
 	if err != nil {
 		return fmt.Errorf(`pubChannel:%s`, err.Error())
 	}
-	queueName := self.config[`amqp_queue_name`]
+	queueName := self.GetRMQName()
 	if queueName == "" {
 		return fmt.Errorf(`amqp_queue_name is empty`)
 	}

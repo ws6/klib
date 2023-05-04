@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -287,10 +288,16 @@ func (self *Klib) ProduceChan(ctx context.Context, topic string, msgsChan <-chan
 }
 
 func (self *Klib) GetConsumerGroupId() string {
+	if c := os.Getenv(`KLIB_CONSUMER_GROUP_ID`); c != "" {
+		self.config[`consumer_group_id`] = c
+	}
 	return self.config[`consumer_group_id`]
 }
 
 func (self *Klib) SetConsumerGroupId(id string) {
+	if c := os.Getenv(`KLIB_CONSUMER_GROUP_ID`); c != "" {
+		os.Setenv(`KLIB_CONSUMER_GROUP_ID`, "")
+	}
 	self.config[`consumer_group_id`] = id
 }
 
